@@ -20,6 +20,22 @@ from selenium.common.exceptions import NoSuchElementException
 
 
 SLEEP_FACTOR = 0.5
+URLS = {
+    "pates_condiments_conserves": "https://www.migros.ch/fr/category/pates-condiments-conserves",
+    "produits_laitiers_ufs_plats": "https://www.migros.ch/fr/category/produits-laitiers-ufs-plats-prep",
+    "fruits_legumes": "https://www.migros.ch/fr/category/fruits-legumes",
+    "viandes_poissons": "https://www.migros.ch/fr/category/viandes-poissons",
+    "boulangerie_patisserie": "https://www.migros.ch/fr/category/boulangerie-patisserie-petit-dej",
+    "pates_condiments_conserves":"https://www.migros.ch/fr/category/pates-condiments-conserves",
+    "snacks_confiseries":"https://www.migros.ch/fr/category/snacks-confiseries",
+    "surgeles":"https://www.migros.ch/fr/category/surgeles",
+    "boissons_cafe_the":"https://www.migros.ch/fr/category/boissons-cafe-the",
+    "vins_bieres_spiritueux":"https://www.migros.ch/fr/category/vins-bieres-spiritueux",
+    "cosmetiques_droguerie":"https://www.migros.ch/fr/category/cosmetiques-droguerie",
+    "entretien_nettoyage":"https://www.migros.ch/fr/category/entretien-nettoyage",
+} 
+
+
 
 def clean_price_to_float(raw_string):
     """Cleans Swiss price formats (1.-, 16.–, 1.−) into sortable floats."""
@@ -101,18 +117,11 @@ def create_driver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Éviter la détection Headless
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # User-agent très spécifique
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-    
     driver = webdriver.Chrome(options=chrome_options)
-    
-    # Script pour supprimer le flag 'webdriver' dans le navigateur
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": """
             Object.defineProperty(navigator, 'webdriver', {
@@ -131,7 +140,6 @@ def load_and_expand_page(driver, url):
     print(f"Loading {url}...")
     driver.get(url)
     
-    # Initial wait for the Angular app to mount
     time.sleep(SLEEP_FACTOR*3) 
     
     click_count = 0
@@ -140,20 +148,16 @@ def load_and_expand_page(driver, url):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(SLEEP_FACTOR*1) 
         
-        # 2. Check the "Source of Truth": the remaining products div
+        # 2. Check if the "remaining products" counter is still present
         try:
-            # We use a broad search for the class since the _ngcontent attribute changes
             driver.find_element(By.CSS_SELECTOR, "div.remaining-products")
         except NoSuchElementException:
             print("Finished: 'remaining-products' div not found. All products loaded.")
             break
             
-        # 3. If counter exists, click the button using the data-testid
         try:
-            # The <a> tag is the actual clickable element
             button = driver.find_element(By.CSS_SELECTOR, '[data-testid="view-more-button"]')
             
-            # Scroll it into view (centered) to avoid header/footer overlaps
             
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
             time.sleep(SLEEP_FACTOR*0.5)
@@ -162,12 +166,9 @@ def load_and_expand_page(driver, url):
             click_count += 1
             print(f"Action: Clicked 'Voir plus' ({click_count}). Waiting 2s for render...")
             
-            # 4. Wait for Angular to append the next 100 items to the DOM
             time.sleep(SLEEP_FACTOR*2)
             
         except NoSuchElementException:
-            # If the counter says we have products but the button is missing, 
-            # we might need a longer scroll or wait.
             print("Counter detected, but button not visible yet. Retrying scroll...")
             time.sleep(SLEEP_FACTOR*2)
         except Exception as e:
@@ -205,17 +206,15 @@ def fetch_product_data(base_url, path_to_json="migros_products.json", fetch_onli
             print("Parsing HTML...")
             soup = BeautifulSoup(rendered_html, 'html.parser')
             
-            # Find ALL product cards on this massive, fully expanded page
             product_cards = soup.find_all('article', class_='product-card')
             print(f"Found {len(product_cards)} product elements. Extracting data...")
             
             for card in product_cards:
-                parsed_data = parse_product(card) # Call your existing parsing function
+                parsed_data = parse_product(card)
                 if parsed_data and parsed_data.get('name'):
                     all_products.append(parsed_data)
                     
     finally:
-        # CRITICAL: Always close the driver
         driver.quit()
 
     print(f"\nSuccessfully extracted {len(all_products)} total products.")
@@ -238,41 +237,20 @@ def save_to_mongodb(products_list, db_name="migros_db", collection_name="product
     
     print(f"Connected to MongoDB. Saving {len(products_list)} product snapshots...")
     
-    # Capture the exact time this snapshot is being taken
     scrape_timestamp = datetime.utcnow()
     
     for product in products_list:
         if not product.get('id'):
             continue
-            
-        # 1. Add the timestamp so you can group/sort by date later
         product['scraped_at'] = scrape_timestamp
-        
-        # 2. We DO NOT set product['_id']. 
-        # By leaving '_id' out, MongoDB will auto-generate a unique ObjectId for this snapshot.
-        
-        # 3. Use insert_one instead of update_one/upsert to append a new history record
         collection.insert_one(product)
         
     print("Snapshot data successfully saved to MongoDB!")
 
-def fetch_all_products():
-    urls = {
-        "pates_condiments_conserves": "https://www.migros.ch/fr/category/pates-condiments-conserves",
-        "produits_laitiers_ufs_plats": "https://www.migros.ch/fr/category/produits-laitiers-ufs-plats-prep",
-        "fruits_legumes": "https://www.migros.ch/fr/category/fruits-legumes",
-        "viandes_poissons": "https://www.migros.ch/fr/category/viandes-poissons",
-        "boulangerie_patisserie": "https://www.migros.ch/fr/category/boulangerie-patisserie-petit-dej",
-        "pates_condiments_conserves":"https://www.migros.ch/fr/category/pates-condiments-conserves",
-        "snacks_confiseries":"https://www.migros.ch/fr/category/snacks-confiseries",
-        "surgeles":"https://www.migros.ch/fr/category/surgeles",
-        "boissons_cafe_the":"https://www.migros.ch/fr/category/boissons-cafe-the",
-        "vins_bieres_spiritueux":"https://www.migros.ch/fr/category/vins-bieres-spiritueux",
-        "cosmetiques_droguerie":"https://www.migros.ch/fr/category/cosmetiques-droguerie",
-        "entretien_nettoyage":"https://www.migros.ch/fr/category/entretien-nettoyage",
-    }   
 
-    for category, url in urls.items():
+def fetch_all_products():
+    """Main function to fetch products for all categories and save to MongoDB."""
+    for category, url in URLS.items():
         print(f"\n--- Starting scrape for category: {category} ---")
         products = fetch_product_data(base_url=url, path_to_json=f"{category}.json", fetch_online=True)
         save_to_mongodb(products_list=products, db_name="migros_db", collection_name=category)
@@ -280,4 +258,11 @@ def fetch_all_products():
 
 
 if __name__ == "__main__":
-    fetch_all_products()
+    # check if a mongodb server is running before starting the scraping process
+    try:
+        client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=5000)
+        client.server_info()  # Trigger a server selection to check connection
+        print("✅ MongoDB connection successful. Starting scraping process...")
+        fetch_all_products()
+    except Exception as e:
+        print(f"⚠️ MongoDB connection failed: {e}") 
