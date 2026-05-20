@@ -2,3 +2,6 @@
 *.html
 *.png
 *.json
+
+__pycache__/
+*.pyc
