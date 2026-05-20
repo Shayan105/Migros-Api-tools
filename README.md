@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
 
-MigrosScrapper scrapes product data from Migros category pages, stores time-based snapshots in MongoDB, and exposes a FastAPI service to query products by category with optional date and discount filters.
+This repo scrapes product data from Migros category pages, stores time-based snapshots in MongoDB, and exposes a FastAPI service to query products by category with optional date and discount filters.
 
 ## Try it yourself
 Use the publicly available url : https://api.mi-gross.ch/products/viandes_poissons?page=1&limit=20
