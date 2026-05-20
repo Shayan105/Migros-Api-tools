@@ -5,7 +5,7 @@
 
 MigrosScrapper scrapes product data from Migros category pages, stores time-based snapshots in MongoDB, and exposes a FastAPI service to query products by category with optional date and discount filters.
 
-## Why this project is useful
+## Why this project
 
 - Scrapes multiple Migros categories automatically
 - Stores historical snapshots (`scraped_at`) for time-based analysis
