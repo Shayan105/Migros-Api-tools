@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  scraper:
+    build: .
+    container_name: migros_scraper
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Points directly to the host alias declared below
+      - MONGO_URI=mongodb://host.docker.internal:27017/
+    extra_hosts:
+      # Maps host.docker.internal to your Linux host's internal bridge IP gateway
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
