@@ -1,23 +1,14 @@
-
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from bs4 import BeautifulSoup
-import time
-import json
-import re 
-from pymongo import MongoClient
 import os
+import re 
+import time
 import json
 from datetime import datetime
-import os
-import json
-import time
 from bs4 import BeautifulSoup
+from pymongo import MongoClient
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
-
 
 SLEEP_FACTOR = 0.5
 URLS = {
@@ -35,14 +26,13 @@ URLS = {
     "entretien_nettoyage":"https://www.migros.ch/fr/category/entretien-nettoyage",
 } 
 
-
+# Pull the host connection target dynamically from the environment variables
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/")
 
 def clean_price_to_float(raw_string):
-    """Cleans Swiss price formats (1.-, 16.–, 1.−) into sortable floats."""
     if not raw_string:
         return None
     cleaned = raw_string.strip()
-    # Regex: Look for a dot followed by any non-digit chars at the end and replace with .00
     cleaned = re.sub(r'\.\D+$', '.00', cleaned)
     try:
         return float(cleaned)
@@ -50,24 +40,18 @@ def clean_price_to_float(raw_string):
         return cleaned
 
 def parse_product(article):
-    """Parses a single product card into a dictionary."""
     product_dict = {}
-    
-    # ID
     link_tag = article.find('a', {'data-testid': 'product-link'})
     product_dict['id'] = link_tag.get('href').rstrip('/').split('/')[-1] if link_tag else None
     
-    # Brand & Name
     brand = article.find('span', class_='name')
     product_dict['brand'] = brand.text.strip() if brand else None
     name = article.find('span', attrs={'data-testid': lambda x: x and x.startswith('product-name')})
     product_dict['name'] = name.text.strip() if name else None
     
-    # Price
     price_tag = article.find('span', {'data-testid': 'current-price'})
     product_dict['price'] = clean_price_to_float(price_tag.text) if price_tag else None
 
-    # Promotion Check    
     promo_badge = article.find('span', class_='badge-promo')
     product_dict['is_reduced'] = promo_badge is not None
 
@@ -77,7 +61,6 @@ def parse_product(article):
     else:
         product_dict['reduction_text'] = None
         
-    # Quantity (Multipack Math)
     quantity_tag = article.find('span', {'data-testid': 'default-product-size'})
     if quantity_tag:
         raw_qty = quantity_tag.text.strip()
@@ -91,7 +74,6 @@ def parse_product(article):
     else:
         product_dict['quantity'] = None
     
-    # Price per Unit & Unit
     product_dict['price_per_unit'], product_dict['unit'] = None, None
     ppu_tag = article.find('span', id=lambda x: x and x.endswith('-price-unit'))
     if ppu_tag:
@@ -103,10 +85,8 @@ def parse_product(article):
         else:
             product_dict['price_per_unit'] = clean_price_to_float(raw_ppu)
     
-    # Image URL
     img = article.find('img')
     product_dict['image_url'] = img.get('src') if img else None
-    
     return product_dict
 
 def create_driver():
@@ -131,24 +111,16 @@ def create_driver():
     })
     return driver
 
-
 def load_and_expand_page(driver, url):
-    """
-    Loads the page and clicks the 'Load More' button based on the presence
-    of the 'remaining-products' counter.
-    """
     print(f"Loading {url}...")
     driver.get(url)
-    
     time.sleep(SLEEP_FACTOR*3) 
     
     click_count = 0
     while True:
-        # 1. Scroll to bottom to ensure the counter and button are triggered/rendered
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(SLEEP_FACTOR*1) 
         
-        # 2. Check if the "remaining products" counter is still present
         try:
             driver.find_element(By.CSS_SELECTOR, "div.remaining-products")
         except NoSuchElementException:
@@ -157,32 +129,22 @@ def load_and_expand_page(driver, url):
             
         try:
             button = driver.find_element(By.CSS_SELECTOR, '[data-testid="view-more-button"]')
-            
-            
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
             time.sleep(SLEEP_FACTOR*0.5)
             driver.execute_script("arguments[0].click();", button)
                         
             click_count += 1
             print(f"Action: Clicked 'Voir plus' ({click_count}). Waiting 2s for render...")
-            
             time.sleep(SLEEP_FACTOR*2)
-            
         except NoSuchElementException:
             print("Counter detected, but button not visible yet. Retrying scroll...")
             time.sleep(SLEEP_FACTOR*2)
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             break
-
     return driver.page_source
 
-
 def fetch_product_data(base_url, path_to_json="migros_products.json", fetch_online=True):
-    """
-    Fetches product data either by dynamically scrolling the page or loading a local JSON file.
-    """
-    # --- LOCAL FILE OVERRIDE ---
     if not fetch_online:
         print(f"Bypassing online scrape. Attempting to load local file: '{path_to_json}'...")
         if os.path.exists(path_to_json):
@@ -193,77 +155,53 @@ def fetch_product_data(base_url, path_to_json="migros_products.json", fetch_onli
         else:
             print(f"⚠️ Warning: Local file '{path_to_json}' not found! Forcing online fetch...")
             
-    # --- LIVE SCRAPING LOGIC ---
     print(f"Fetching online data from: {base_url}")
     driver = create_driver()
     all_products = []
-    
     try:
-        # Get the fully expanded HTML with all products loaded
         rendered_html = load_and_expand_page(driver, base_url)
-        
         if rendered_html:
             print("Parsing HTML...")
             soup = BeautifulSoup(rendered_html, 'html.parser')
-            
             product_cards = soup.find_all('article', class_='product-card')
             print(f"Found {len(product_cards)} product elements. Extracting data...")
-            
             for card in product_cards:
                 parsed_data = parse_product(card)
                 if parsed_data and parsed_data.get('name'):
                     all_products.append(parsed_data)
-                    
     finally:
         driver.quit()
 
     print(f"\nSuccessfully extracted {len(all_products)} total products.")
-
-    # Save the fresh data to JSON
     with open(path_to_json, "w", encoding="utf-8") as f:
         json.dump(all_products, f, indent=4, ensure_ascii=False)
-    print(f"All data successfully saved to '{path_to_json}'!")
-    
     return all_products
 
-
 def save_to_mongodb(products_list, db_name="migros_db", collection_name="products"):
-    """Saves a list of dictionaries to MongoDB as daily snapshots."""
-    
-    # Connect to the local MongoDB server
-    mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-    client = MongoClient(mongo_uri)
+    client = MongoClient(MONGO_URI)
     db = client[db_name]
     collection = db[collection_name]
-    
     print(f"Connected to MongoDB. Saving {len(products_list)} product snapshots...")
-    
     scrape_timestamp = datetime.utcnow()
-    
     for product in products_list:
         if not product.get('id'):
             continue
         product['scraped_at'] = scrape_timestamp
         collection.insert_one(product)
-        
     print("Snapshot data successfully saved to MongoDB!")
 
-
 def fetch_all_products():
-    """Main function to fetch products for all categories and save to MongoDB."""
     for category, url in URLS.items():
         print(f"\n--- Starting scrape for category: {category} ---")
         products = fetch_product_data(base_url=url, path_to_json=f"{category}.json", fetch_online=True)
         save_to_mongodb(products_list=products, db_name="migros_db", collection_name=category)
         print(f"--- Completed scrape for category: {category} ---\n")
 
-
 if __name__ == "__main__":
-    # check if a mongodb server is running before starting the scraping process
     try:
-        client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=5000)
-        client.server_info()  # Trigger a server selection to check connection
-        print("✅ MongoDB connection successful. Starting scraping process...")
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        client.server_info()
+        print(f"✅ MongoDB connection successful to {MONGO_URI}. Starting scraping process...")
         fetch_all_products()
     except Exception as e:
-        print(f"⚠️ MongoDB connection failed: {e}") 
+        print(f"⚠️ MongoDB connection failed: {e}")
