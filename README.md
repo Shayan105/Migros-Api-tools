@@ -1,4 +1,4 @@
-# MigrosScrapper
+# Migros Api tools
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
