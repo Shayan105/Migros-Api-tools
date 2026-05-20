@@ -2,14 +2,36 @@ from fastapi import FastAPI, HTTPException, Query
 from pymongo import MongoClient
 from typing import List, Optional
 from datetime import datetime, time, timedelta
+from enum import Enum
 
-app = FastAPI(title="Migros Scraper API", version="1.1.0")
+app = FastAPI(
+    title="Migros Scraper API", 
+    version="1.1.0",
+    description="API to query scraped products from Migros dynamically stored by category."
+)
 
 DB_NAME = "migros_db"
 MONGO_URL = "mongodb://127.0.0.1:27017/"
 
 def get_db():
     return MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)[DB_NAME]
+
+def get_dynamic_category_enum():
+    try:
+        db = get_db()
+        collections = [c for c in db.list_collection_names() if not c.startswith("system.")]
+        if not collections:
+            collections = ["fruits_legumes", "boulangerie_patisserie", "viandes_poissons"]
+        
+        return Enum("Category", {c: c for c in collections})
+    except Exception:
+        return Enum("Category", {
+            "fruits_legumes": "fruits_legumes",
+            "boulangerie_patisserie": "boulangerie_patisserie",
+            "viandes_poissons": "viandes_poissons"
+        })
+
+CategoryEnum = get_dynamic_category_enum()
 
 def format_mongo_doc(doc):
     if doc:
@@ -36,22 +58,23 @@ def build_date_query(date_str: str = None, start_str: str = None, end_str: str =
         
     return query
 
-@app.get("/products/{category}", tags=["Products"])
+@app.get("/products/{category}", tags=["Products"], summary="Get products by category with optional filters")
 def get_products(
-    category: str,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    date: Optional[str] = Query(None, description="Format: YYYY-MM-DD"),
-    start_date: Optional[str] = Query(None, description="Format: YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="Format: YYYY-MM-DD"),
-    is_reduced: Optional[bool] = None
+    category: CategoryEnum,
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    limit: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    date: Optional[str] = Query(None, description="Filter items scraped on a specific day. Format: YYYY-MM-DD"),
+    start_date: Optional[str] = Query(None, description="Start date for range queries. Format: YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="End date for range queries. Format: YYYY-MM-DD"),
+    is_reduced: Optional[bool] = Query(None, description="Filter items that have action prices or discounts")
 ):
     try:
         db = get_db()
+        category_str = category.value
         
         valid_categories = [c for c in db.list_collection_names() if not c.startswith("system.")]
-        if category not in valid_categories:
-            raise HTTPException(status_code=404, detail=f"Category '{category}' not found")
+        if category_str not in valid_categories:
+            raise HTTPException(status_code=404, detail=f"Category '{category_str}' not found")
 
         match_filter = {}
         if is_reduced is not None:
@@ -63,10 +86,10 @@ def get_products(
         if has_date_filter:
             match_filter.update(date_query)
             skip = (page - 1) * limit
-            cursor = db[category].find(match_filter).sort("scraped_at", -1).skip(skip).limit(limit)
+            cursor = db[category_str].find(match_filter).sort("scraped_at", -1).skip(skip).limit(limit)
             
             products = [format_mongo_doc(p) for p in cursor]
-            total = db[category].count_documents(match_filter)
+            total = db[category_str].count_documents(match_filter)
         else:
             pipeline = [
                 {"$match": match_filter},
@@ -89,14 +112,14 @@ def get_products(
                 {"$count": "count"}
             ]
             
-            cursor = db[category].aggregate(pipeline)
+            cursor = db[category_str].aggregate(pipeline)
             products = [format_mongo_doc(p) for p in cursor]
             
-            count_result = list(db[category].aggregate(total_pipeline))
+            count_result = list(db[category_str].aggregate(total_pipeline))
             total = count_result[0]["count"] if count_result else 0
 
         return {
-            "category": category,
+            "category": category_str,
             "mode": "snapshot" if has_date_filter else "latest_distinct",
             "total_matches": total,
             "results": products
@@ -105,7 +128,7 @@ def get_products(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@app.get("/categories", tags=["Metadata"])
+@app.get("/categories", tags=["Metadata"], summary="List all available product categories")
 def list_categories():
     try:
         db = get_db()
