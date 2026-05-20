@@ -6,7 +6,7 @@
 MigrosScrapper scrapes product data from Migros category pages, stores time-based snapshots in MongoDB, and exposes a FastAPI service to query products by category with optional date and discount filters.
 
 ## Try it yourself
-Use the publicly available url : ´https://api.mi-gross.ch/products/viandes_poissons?page=1&limit=20´
+Use the publicly available url : https://api.mi-gross.ch/products/viandes_poissons?page=1&limit=20
 
 ## Why this project
 
